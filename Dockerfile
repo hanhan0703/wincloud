@@ -1,11 +1,51 @@
-# Indicates that the Windows 10 (20H2) image will be used as the base image.
-FROM mcr.microsoft.com/windows:20H2
+FROM archlinux:latest
 
-# Metadata indicating an image maintainer.
-LABEL maintainer="byhanhan@outlook.com"
+# WORKAROUND for glibc 2.33 and old Docker
+# See https://github.com/actions/virtual-environments/issues/2658
+# Thanks to https://github.com/lxqt/lxqt-panel/pull/1562
+RUN patched_glibc=glibc-linux4-2.33-4-x86_64.pkg.tar.zst && \
+    curl -LO "https://repo.archlinuxcn.org/x86_64/$patched_glibc" && \
+    bsdtar -C / -xvf "$patched_glibc"
 
-# Install all dev tools
-RUN powershell -Command Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
-RUN choco install -y git cmake kb2999226 visualstudio2019buildtools visualstudio2019-workload-vctools powershell-core vcredist-all
+RUN tee -a /etc/pacman.conf <<< '[community-testing]'; \
+    tee -a /etc/pacman.conf <<< 'Include = /etc/pacman.d/mirrorlist'; \
+    #
+    # install packages
+    pacman -Syu sudo git make automake gcc python go autoconf cmake pkgconf alsa-utils fakeroot \
+    tigervnc xterm xorg-xhost xdotool ufw --noconfirm; \
+    #
+    # add user
+    useradd arch; \
+    echo 'arch ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers; \
+    mkdir /home/arch; \
+    chown arch:arch /home/arch;
+
+# WORKAROUND for glibc 2.33 and old Docker
+# See https://github.com/actions/virtual-environments/issues/2658
+# Thanks to https://github.com/lxqt/lxqt-panel/pull/1562
+RUN patched_glibc=glibc-linux4-2.33-4-x86_64.pkg.tar.zst && \
+    curl -LO "https://repo.archlinuxcn.org/x86_64/$patched_glibc" && \
+    bsdtar -C / -xvf "$patched_glibc"
+
+
+WORKDIR /home/arch/yay
+RUN git clone https://aur.archlinux.org/yay.git .; \
+    makepkg -si --noconfirm; \
+    #
+    # install packages
+    pacman -Syu qemu libvirt dnsmasq virt-manager bridge-utils flex bison ebtables edk2-ovmf \
+    netctl libvirt-dbus libguestfs --noconfirm;
+
+WORKDIR /home/arch
+ARG DOWNLOAD_URL="https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-virtio"
+RUN FILE_NAME="$(curl -s -N -L "$DOWNLOAD_URL" | grep -Po -m 1 '(?<=\")(?=(virtio-win-)).*?(?<=.iso)')"; \
+    echo "Downloading $DOWNLOAD_URL/$FILE_NAME"; \
+    curl -sSL -o virtio-win.iso "$DOWNLOAD_URL/$FILE_NAME";
+
+ENV DISPLAY :0.0
+ENV USER arch
+
 EXPOSE 8900
-RUN cd C:\ & git clone https://github.com/microsoft/vcpkg & .\vcpkg\bootstrap-vcpkg.bat
+
+COPY boot.sh boot.sh
+ENTRYPOINT ./boot.sh
